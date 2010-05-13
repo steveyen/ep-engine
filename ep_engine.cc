@@ -355,6 +355,23 @@ extern "C" {
         item_info->value[0].iov_len = it->getNBytes();
         return true;
     }
+
+    static void EvpOnTapConnect(ENGINE_HANDLE* handle,
+                                const void* cookie,
+                                ENGINE_EVENT_TYPE event, 
+                                uint32_t *flags,
+                                char *userdata, 
+                                size_t *nuserdata,
+                                void *engine_specific)
+    {
+        getHandle(handle)->onTapConnect(cookie, event, flags, userdata, nuserdata, engine_specific);
+    }
+
+    static void EvpClockHandler(ENGINE_HANDLE* handle)
+    {
+        getHandle(handle)->clockHandler();
+    }
+
 } // C linkage
 
 static SERVER_EXTENSION_API *extensionApi;
@@ -370,7 +387,7 @@ EXTENSION_LOGGER_DESCRIPTOR *getLogger(void) {
 EventuallyPersistentEngine::EventuallyPersistentEngine(GET_SERVER_API get_server_api) :
     dbname("/tmp/test.db"), initFile(NULL), warmup(true), wait_for_warmup(true),
     sqliteDb(NULL), epstore(NULL), databaseInitTime(0), shutdown(false),
-    getServerApi(get_server_api)
+    getServerApi(get_server_api), tapEnabled(false), tapRunning(false)
 {
     interface.interface = 1;
     ENGINE_HANDLE_V1::get_info = EvpGetInfo;
@@ -390,6 +407,8 @@ EventuallyPersistentEngine::EventuallyPersistentEngine(GET_SERVER_API get_server
     ENGINE_HANDLE_V1::tap_notify = EvpTapNotify;
     ENGINE_HANDLE_V1::item_set_cas = EvpItemSetCas;
     ENGINE_HANDLE_V1::get_item_info = EvpGetItemInfo;
+    ENGINE_HANDLE_V1::on_tap_connect = EvpOnTapConnect;
+    ENGINE_HANDLE_V1::clock_handler = EvpClockHandler;
     ENGINE_HANDLE_V1::get_stats_struct = NULL;
 
     serverApi = getServerApi();
