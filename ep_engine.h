@@ -45,6 +45,10 @@ extern "C" {
 #define CMD_START_PERSISTENCE 0x81
 #define CMD_SET_FLUSH_PARAM 0x82
 
+#define CMD_START_REPLICATION 0x90
+#define CMD_STOP_REPLICATION 0x91
+#define CMD_SET_TAP_PARAM 0x92
+
 class BoolCallback : public Callback<bool>
 {
 public:
@@ -1023,6 +1027,30 @@ public:
         }
     }
  
+    bool startReplication() {
+        LockHolder lh(tapMutex);
+        if (!tapPeer.empty() && !tapEnabled && clientTaps.empty()) {
+            tapEnabled = true;
+            lh.unlock();
+
+            tapConnect(tapPeer);
+            return true;
+        } 
+        return false;
+    }
+    
+    void stopReplication() {
+        tapEnabled = false;
+    }
+
+    void setTapPeer(const char *peer) {
+        std::string newPeer = peer;
+        if (tapPeer != newPeer) {
+            tapEnabled = false;
+            tapPeer = newPeer;
+        }
+    }
+
     ~EventuallyPersistentEngine() {
         delete epstore;
         delete sqliteDb;
