@@ -374,6 +374,46 @@ static enum test_result test_delete(ENGINE_HANDLE *h, ENGINE_HANDLE_V1 *h1) {
     return SUCCESS;
 }
 
+static enum test_result test_delete_set(ENGINE_HANDLE *h, ENGINE_HANDLE_V1 *h1) {
+    item *i = NULL;
+    // First try to delete something we know to not be there.
+    check(h1->remove(h, "cookie", "key", 3, 0, 0) == ENGINE_KEY_ENOENT,
+          "Failed to fail initial delete.");
+    check(store(h, h1, "cookie", OPERATION_SET, "key", "somevalue", &i) == ENGINE_SUCCESS,
+          "Failed set.");
+    check_key_value(h, h1, "key", "somevalue", 9);
+
+    // Waiting for persistence.  I can do this more easily in master.
+    testHarness.reload_engine(&h, &h1,
+                              testHarness.engine_path,
+                              testHarness.default_engine_cfg,
+                              true);
+
+    check(h1->remove(h, "cookie", "key", 3, 0, 0) == ENGINE_SUCCESS,
+          "Failed remove with value.");
+    check(store(h, h1, "cookie", OPERATION_SET, "key", "secondvalue", &i) == ENGINE_SUCCESS,
+          "Failed set.");
+
+
+    testHarness.reload_engine(&h, &h1,
+                              testHarness.engine_path,
+                              testHarness.default_engine_cfg,
+                              true);
+
+    check_key_value(h, h1, "key", "secondvalue", 11);
+    check(h1->remove(h, "cookie", "key", 3, 0, 0) == ENGINE_SUCCESS,
+          "Failed remove with value.");
+
+    testHarness.reload_engine(&h, &h1,
+                              testHarness.engine_path,
+                              testHarness.default_engine_cfg,
+                              true);
+
+    check(ENGINE_KEY_ENOENT == verify_key(h, h1, "key"), "Expected missing key");
+
+    return SUCCESS;
+}
+
 static enum test_result test_restart(ENGINE_HANDLE *h, ENGINE_HANDLE_V1 *h1) {
     item *i = NULL;
     static const char val[] = "somevalue";
@@ -474,6 +514,7 @@ engine_test_t* get_tests(void) {
         {"incr", test_incr, NULL, teardown, NULL},
         {"incr with default", test_incr_default, NULL, teardown, NULL},
         {"delete", test_delete, NULL, teardown, NULL},
+        {"delete+set", test_delete_set, NULL, teardown, NULL},
         {"flush", test_flush, NULL, teardown, NULL},
         // Stats tests
         {"stats", NULL, NULL, teardown, NULL},

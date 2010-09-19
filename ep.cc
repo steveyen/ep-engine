@@ -250,7 +250,7 @@ void EventuallyPersistentStore::reset() {
 }
 
 void EventuallyPersistentStore::del(const std::string &key, Callback<bool> &cb) {
-    bool existed = storage.del(key);
+    bool existed = storage.softDelete(key);
     if (existed) {
         queueDirty(key);
         stats.curr_items--;
@@ -377,9 +377,9 @@ int EventuallyPersistentStore::flushOne(std::queue<QueuedItem> *q,
 
     int bucket_num = storage.bucket(qi.getKey());
     LockHolder lh(storage.getMutex(bucket_num));
-    StoredValue *v = storage.unlocked_find(qi.getKey(), bucket_num);
+    StoredValue *v = storage.unlocked_find(qi.getKey(), bucket_num, true);
 
-    bool found = v != NULL;
+    bool found = v != NULL && !v->isDeleted();
     bool isDirty = (found && v->isDirty());
     Item *val = NULL;
     rel_time_t queued(qi.getDirtied()), dirtied(0);
@@ -423,6 +423,13 @@ int EventuallyPersistentStore::flushOne(std::queue<QueuedItem> *q,
             stats.totalPersisted++;
         }
     }
+
+    if (v && v->isDeleted()) {
+        // Completing the deletion.
+        bool deleted = storage.unlocked_del(qi.getKey(), bucket_num);
+        assert(deleted);
+    }
+
     stats.flusher_todo--;
     lh.unlock();
 

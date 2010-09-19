@@ -186,6 +186,14 @@ public:
         }
     }
 
+    bool isDeleted() {
+        return value.get() == NULL;
+    }
+
+    void del() {
+        value.reset();
+    }
+
     /**
      * Get the size of a StoredValue object.
      *
@@ -364,10 +372,9 @@ public:
         mutation_type_t rv = NOT_FOUND;
         int bucket_num = bucket(val.getKey());
         LockHolder lh(getMutex(bucket_num));
-        StoredValue *v = unlocked_find(val.getKey(), bucket_num);
+        StoredValue *v = unlocked_find(val.getKey(), bucket_num, true);
         Item &itm = const_cast<Item&>(val);
         if (v) {
-
             if (v->isLocked(ep_current_time())) {
                 /*
                  * item is locked, deny if there is cas value mismatch
@@ -401,24 +408,35 @@ public:
         assert(active());
         int bucket_num = bucket(val.getKey());
         LockHolder lh(getMutex(bucket_num));
-        StoredValue *v = unlocked_find(val.getKey(), bucket_num);
-        if (v) {
+        StoredValue *v = unlocked_find(val.getKey(), bucket_num, true);
+        if (v && !v->isDeleted()) {
             return false;
         } else {
             Item &itm = const_cast<Item&>(val);
             itm.setCas();
-            v = valFact(itm, values[bucket_num], isDirty);
-            values[bucket_num] = v;
+            if (v) {
+                v->setValue(itm.getValue(),
+                            itm.getFlags(), itm.getExptime(),
+                            itm.getCas());
+            } else {
+                v = valFact(itm, values[bucket_num], isDirty);
+                values[bucket_num] = v;
+            }
         }
 
         return true;
     }
 
-    StoredValue *unlocked_find(const std::string &key, int bucket_num) {
+    StoredValue *unlocked_find(const std::string &key, int bucket_num,
+                               bool wantsDeleted=false) {
         StoredValue *v = values[bucket_num];
         while (v) {
             if (v->hasKey(key)) {
-                return v;
+                if (wantsDeleted || !v->isDeleted()) {
+                    return v;
+                } else {
+                    return NULL;
+                }
             }
             v = v->next;
         }
@@ -452,12 +470,27 @@ public:
         return getMutexForLock(mutexForBucket(bucket_num));
     }
 
+    bool softDelete(const std::string &key) {
+        assert(active());
+        int bucket_num = bucket(key);
+        LockHolder lh(getMutex(bucket_num));
+        StoredValue *v = unlocked_find(key, bucket_num);
+        if (v) {
+            v->del();
+        }
+        return v != NULL;
+    }
+
     // True if it existed
     bool del(const std::string &key) {
         assert(active());
         int bucket_num = bucket(key);
         LockHolder lh(getMutex(bucket_num));
 
+        return unlocked_del(key, bucket_num);
+    }
+
+    bool unlocked_del(const std::string &key, int bucket_num) {
         StoredValue *v = values[bucket_num];
 
         // Special case empty bucket.
