@@ -389,7 +389,9 @@ public:
                 return INVALID_CAS;
             }
             itm.setCas();
-            rv = v->isClean() ? WAS_CLEAN : WAS_DIRTY;
+            if (!v->isDeleted()) {
+                rv = v->isClean() ? WAS_CLEAN : WAS_DIRTY;
+            }
             v->setValue(itm.getValue(),
                         itm.getFlags(), itm.getExptime(),
                         itm.getCas());
