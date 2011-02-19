@@ -250,6 +250,11 @@ public:
         return numItems - persistenceCursorOffset;
     }
 
+    /**
+     * Clear all the checkpoints managed by this checkpoint manager.
+     */
+    void clear();
+
     static void initializeCheckpointConfig(rel_time_t checkpoint_period,
                                            size_t checkpoint_max_items) {
         checkpointPeriod = checkpoint_period;
