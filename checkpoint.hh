@@ -297,6 +297,15 @@ private:
     uint64_t getAllItemsFromCurrentPosition(CheckpointCursor &cursor,
                                             std::vector<queued_item> &items);
 
+    void moveCursorToNextCheckpoint(CheckpointCursor &cursor);
+
+    /**
+     * Check the current open checkpoint to see if we need to create the new open checkpoint.
+     * @return the previous open checkpoint Id if we create the new open checkpoint. Otherwise
+     * return 0.
+     */
+    uint64_t checkOpenCheckpoint();
+
 
     EPStats                 &stats;
     Mutex                    queueLock;

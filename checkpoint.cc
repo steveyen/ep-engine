@@ -199,15 +199,7 @@ void CheckpointManager::queueDirty(queued_item item, const RCPtr<VBucket> &vbuck
 
     assert(vbucket);
     if (vbucket->getState() == vbucket_state_active) {
-        // Create the new open checkpoint if the time elapsed since the creation of the current
-        // checkpoint is greater than the threshold or it is reached to the max number of mutations.
-        if (checkpointList.back()->getNumItems() > checkpointMaxItems ||
-            (checkpointList.back()->getNumItems() > 0 &&
-             (ep_current_time() - checkpointList.back()->getCreationTime()) >= checkpointPeriod)) {
-
-            checkpointList.back()->setState(closed);
-            addNewCheckpoint_UNLOCKED(nextCheckpointId++);
-        }
+        checkOpenCheckpoint();
     }
     // Note that the creation of a new checkpoint on the replica vbucket will be controlled by TAP
     // mutation messages from the active vbucket, which contain the checkpoint Ids.
@@ -220,13 +212,7 @@ uint64_t CheckpointManager::getAllItemsFromCurrentPosition(CheckpointCursor &cur
             items.push_back(*(cursor.currentPos));
         }
         if ((*(cursor.currentCheckpoint))->getState() == closed) {
-            // Decrease the reference count of the current checkpoint by 1.
-            (*(cursor.currentCheckpoint))->decrReferenceCounter();
-            // Move the cursor to the next checkpoint.
-            ++(cursor.currentCheckpoint);
-            cursor.currentPos = (*(cursor.currentCheckpoint))->begin();
-            // Increase the reference counter of the next checkpoint by 1.
-            (*(cursor.currentCheckpoint))->incrReferenceCounter();
+            moveCursorToNextCheckpoint(cursor);
         } else { // The cursor is currently in the open checkpoint and reached to
                  // the end() of the open checkpoint.
             --(cursor.currentPos);
@@ -290,14 +276,7 @@ queued_item CheckpointManager::nextItemFromClosedCheckpoint(CheckpointCursor &cu
     if (cursor.currentPos != (*(cursor.currentCheckpoint))->end()) {
         return *(cursor.currentPos);
     } else {
-        // decr the reference counter for the current checkpoint by 1.
-        (*(cursor.currentCheckpoint))->decrReferenceCounter();
-        // Move the cursor to the next checkpoint.
-        ++(cursor.currentCheckpoint);
-        cursor.currentPos = (*(cursor.currentCheckpoint))->begin();
-        // incr the reference counter for the next checkpoint by 1.
-        (*(cursor.currentCheckpoint))->incrReferenceCounter();
-
+        moveCursorToNextCheckpoint(cursor);
         if ((*(cursor.currentCheckpoint))->getState() == closed) { // the close checkpoint.
             ++(cursor.currentPos); // Move the cursor to point to the actual first item.
             return *(cursor.currentPos);
@@ -346,4 +325,32 @@ void CheckpointManager::clear() {
     numItems = 0;
     persistenceCursorOffset = 0;
     mutationCounter = 0;
+}
+
+void CheckpointManager::moveCursorToNextCheckpoint(CheckpointCursor &cursor) {
+    if ((*(cursor.currentCheckpoint))->getState() == opened) {
+        return;
+    }
+    // decr the reference counter for the current checkpoint by 1.
+    (*(cursor.currentCheckpoint))->decrReferenceCounter();
+    // Move the cursor to the next checkpoint.
+    ++(cursor.currentCheckpoint);
+    cursor.currentPos = (*(cursor.currentCheckpoint))->begin();
+    // incr the reference counter for the next checkpoint by 1.
+    (*(cursor.currentCheckpoint))->incrReferenceCounter();
+}
+
+uint64_t CheckpointManager::checkOpenCheckpoint() {
+    int checkpointId = 0;
+    // Create the new open checkpoint if the time elapsed since the creation of the current
+    // checkpoint is greater than the threshold or it is reached to the max number of mutations.
+    if (checkpointList.back()->getNumItems() > checkpointMaxItems ||
+        (checkpointList.back()->getNumItems() > 0 &&
+         (ep_current_time() - checkpointList.back()->getCreationTime()) >= checkpointPeriod)) {
+
+        checkpointId = checkpointList.back()->getId();
+        checkpointList.back()->setState(closed);
+        addNewCheckpoint_UNLOCKED(nextCheckpointId++);
+    }
+    return checkpointId;
 }
