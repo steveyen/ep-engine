@@ -35,7 +35,6 @@ TapProducer::TapProducer(EventuallyPersistentEngine &theEngine,
     TapConnection(theEngine, c, n),
     queue(NULL),
     queueSize(0),
-    queue_set(NULL),
     flags(f),
     recordsFetched(0),
     pendingFlush(false),
@@ -56,8 +55,7 @@ TapProducer::TapProducer(EventuallyPersistentEngine &theEngine,
     notifySent(false)
 {
     evaluateFlags();
-    queue = new std::list<QueuedItem>;
-    queue_set = new std::set<QueuedItem>;
+    queue = new std::list<queued_item>;
 
     if (supportAck) {
         expiryTime = ep_current_time() + ackGracePeriod;
@@ -278,8 +276,10 @@ void TapProducer::rollback() {
                 }
             }
             break;
+        case TAP_DELETION:
+        case TAP_FLUSH:
         case TAP_MUTATION:
-            addEvent_UNLOCKED(i->key, i->vbucket, queue_op_set);
+            addEvent_UNLOCKED(i->item);
             break;
         case TAP_OPAQUE:
             {
@@ -380,8 +380,10 @@ void TapProducer::reschedule_UNLOCKED(const std::list<TapLogElement>::iterator &
             }
         }
         break;
+    case TAP_DELETION:
+    case TAP_FLUSH:
     case TAP_MUTATION:
-        addEvent_UNLOCKED(iter->key, iter->vbucket, queue_op_set);
+        addEvent_UNLOCKED(iter->item);
         break;
     default:
         getLogger()->log(EXTENSION_LOG_WARNING, NULL,
@@ -786,4 +788,58 @@ bool TapProducer::isTimeForNoop() {
 void TapProducer::setTimeForNoop()
 {
     noop.set(true);
+}
+
+queued_item TapProducer::next() {
+    LockHolder lh(queueLock);
+
+    if (queue->empty()) {
+        const VBucketMap &vbuckets = engine.getEpStore()->getVBuckets();
+        std::map<uint16_t, uint64_t>::iterator it = currentVBCheckpointIds.begin();
+        for (; it != currentVBCheckpointIds.end(); ++it) {
+            uint16_t vbid = it->first;
+            RCPtr<VBucket> vb = vbuckets.getBucket(vbid);
+            if (!vb || vb->getState() == vbucket_state_dead) {
+                continue;
+            }
+            queued_item item = vb->checkpointManager.nextItem(name);
+            if (item->getOperation() != queue_op_empty) {
+                queue->push_back(item);
+                queueMemSize.incr(sizeof(queued_item));
+            }
+        }
+        // queue size also includes the number of remaining items from each vbucket's checkpoint.
+        queueSize = queue->size() + getRemainingOnCheckpoints();
+    }
+
+    if (!queue->empty()) {
+        queued_item qi = queue->front();
+        queue->pop_front();
+        --queueSize;
+        if (queueMemSize > sizeof(queued_item)) {
+            queueMemSize.decr(sizeof(queued_item));
+        } else {
+            queueMemSize.set(0);
+        }
+        ++recordsFetched;
+        return qi;
+    }
+
+    queued_item empty_item(new QueuedItem("", 0xffff, queue_op_empty));
+    return empty_item;
+}
+
+size_t TapProducer::getRemainingOnCheckpoints() {
+    size_t numItems = 0;
+    const VBucketMap &vbuckets = engine.getEpStore()->getVBuckets();
+    std::map<uint16_t, uint64_t>::iterator it = currentVBCheckpointIds.begin();
+    for (; it != currentVBCheckpointIds.end(); ++it) {
+        uint16_t vbid = it->first;
+        RCPtr<VBucket> vb = vbuckets.getBucket(vbid);
+        if (!vb || vb->getState() == vbucket_state_dead) {
+            continue;
+        }
+        numItems += vb->checkpointManager.getNumItemsForTAPConnection(name);
+    }
+    return numItems;
 }
