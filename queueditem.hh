@@ -47,18 +47,6 @@ public:
         assert(stats->memOverhead.get() < GIGANTOR);
     }
 
-    // This copy constructor will be removed when TAP implementation is adapted for using the
-    // unified queue.
-    QueuedItem(const QueuedItem &other) {
-        op = other.op;
-        vbucket_version = other.vbucket_version;
-        queued = other.queued;
-        dirtied = other.dirtied;
-        item = other.item;
-        stats->memOverhead.incr(size());
-        assert(stats->memOverhead.get() < GIGANTOR);
-    }
-
     ~QueuedItem() {
         stats->memOverhead.decr(size());
         assert(stats->memOverhead.get() < GIGANTOR);
