@@ -319,13 +319,15 @@ uint64_t CheckpointManager::removeClosedUnrefCheckpoints(const RCPtr<VBucket> &v
     return checkpoint_id;
 }
 
-void CheckpointManager::queueDirty(const queued_item &item, const RCPtr<VBucket> &vbucket) {
+bool CheckpointManager::queueDirty(const queued_item &item, const RCPtr<VBucket> &vbucket) {
     LockHolder lh(queueLock);
     // The current open checkpoint should be always the last one in the checkpoint list.
     assert(checkpointList.back()->getState() == opened);
+    size_t numItemsBefore = getNumItemsForPersistence();
     if (checkpointList.back()->queueDirty(item, this) == NEW_ITEM) {
         ++numItems;
     }
+    size_t numItemsAfter = getNumItemsForPersistence();
 
     assert(vbucket);
     if (vbucket->getState() == vbucket_state_active) {
@@ -333,6 +335,8 @@ void CheckpointManager::queueDirty(const queued_item &item, const RCPtr<VBucket>
     }
     // Note that the creation of a new checkpoint on the replica vbucket will be controlled by TAP
     // mutation messages from the active vbucket, which contain the checkpoint Ids.
+
+    return (numItemsAfter - numItemsBefore) > 0 ? true : false;
 }
 
 uint64_t CheckpointManager::getAllItemsFromCurrentPosition(CheckpointCursor &cursor,

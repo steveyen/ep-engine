@@ -1299,11 +1299,12 @@ std::queue<queued_item>* EventuallyPersistentStore::beginFlush() {
             item_list.clear();
         }
 
+        size_t queue_size = getWriteQueueSize();
         stats.flusher_todo.set(writing.size());
-        stats.queue_size.set(getWriteQueueSize());
+        stats.queue_size.set(queue_size);
         getLogger()->log(EXTENSION_LOG_DEBUG, NULL,
                          "Flushing %d items with %d still in queue\n",
-                         writing.size(), getWriteQueueSize());
+                         writing.size(), queue_size);
         rv = &writing;
     }
     return rv;
@@ -1316,7 +1317,8 @@ void EventuallyPersistentStore::requeueRejectedItems(std::queue<queued_item> *re
         writing.push(rej->front());
         rej->pop();
     }
-    stats.queue_size.set(getWriteQueueSize() + writing.size());
+    stats.flusher_todo.set(writing.size());
+    stats.queue_size.set(getWriteQueueSize());
 }
 
 void EventuallyPersistentStore::completeFlush(rel_time_t flush_start) {
@@ -1336,7 +1338,8 @@ void EventuallyPersistentStore::completeFlush(rel_time_t flush_start) {
     // that was successfully persisted for each vbucket.
     scheduleVBSnapshot(Priority::VBucketPersistHighPriority);
 
-    stats.queue_size.set(getWriteQueueSize() + writing.size());
+    stats.flusher_todo.set(writing.size());
+    stats.queue_size.set(getWriteQueueSize());
     rel_time_t complete_time = ep_current_time();
     stats.flushDuration.set(complete_time - flush_start);
     stats.flushDurationHighWat.set(std::max(stats.flushDuration.get(),
@@ -1707,9 +1710,10 @@ void EventuallyPersistentStore::queueDirty(const std::string &key,
         if (vb) {
             queued_item item(new QueuedItem(key, value, vbid, op, vbuckets.getBucketVersion(vbid),
                                             rowid, flags, exptime, cas));
-            vb->checkpointManager.queueDirty(item, vb);
+            if (vb->checkpointManager.queueDirty(item, vb)) {
+                ++stats.queue_size;
+            }
             ++stats.totalEnqueued;
-            stats.queue_size = getWriteQueueSize();
             vb->doStatsForQueueing(*item, itemBytes);
         }
     }

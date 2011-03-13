@@ -228,8 +228,9 @@ public:
      * Queue an item to be written to persistent layer.
      * @param item the item to be persisted.
      * @param vbucket the vbucket that a new item is pushed into.
+     * @return true if an item queued increases the size of persistence queue by 1.
      */
-    void queueDirty(const queued_item &item, const RCPtr<VBucket> &vbucket);
+    bool queueDirty(const queued_item &item, const RCPtr<VBucket> &vbucket);
 
     /**
      * Return the next item to be sent to a given TAP connection
