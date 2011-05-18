@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """
-tap protocol client.
+Example tap protocol client.
 
 Copyright (c) 2010  Dustin Sallings <dustin@spy.net>
 """
 
+import os
 import sys
 import socket
 import string
@@ -13,13 +14,50 @@ import struct
 import asyncore
 import exceptions
 import signal
+import getopt
 
 import mc_bin_server
+import mc_bin_client
 
 from memcacheConstants import REQ_MAGIC_BYTE, RES_MAGIC_BYTE
 from memcacheConstants import REQ_PKT_FMT, RES_PKT_FMT, MIN_RECV_PACKET
 from memcacheConstants import SET_PKT_FMT, DEL_PKT_FMT, INCRDECR_RES_FMT
+
 import memcacheConstants
+
+def usage(err=0):
+    print >> sys.stderr, """
+Usage: %s [-u bucket_user [-p bucket_password]] host:port [... hostN:portN]
+
+Example:
+  %s -u user_profiles -p secret9876 membase-01:11210 membase-02:11210
+""" % (os.path.basename(sys.argv[0]),
+       os.path.basename(sys.argv[0]))
+    sys.exit(err)
+
+def parse_args(args):
+    user = None
+    pswd = None
+
+    try:
+        opts, args = getopt.getopt(args, 'hu:p:', ['help'])
+    except getopt.GetoptError, e:
+        usage("ERROR: " + e.msg)
+
+    for (o, a) in opts:
+        if o == '--help' or o == '-h':
+            usage()
+        elif o == '-u':
+            user = a
+        elif o == '-p':
+            pswd = a
+        else:
+            usage("ERROR: unknown option - " + o)
+
+    if not args or len(args) < 1:
+        usage("ERROR: missing at least one host:port to TAP")
+
+    return user, pswd, args
 
 def signal_handler(signal, frame):
     print 'Tap stream terminated by user'
@@ -27,14 +65,32 @@ def signal_handler(signal, frame):
 
 class TapConnection(mc_bin_server.MemcachedBinaryChannel):
 
-    def __init__(self, server, port, callback, clientId=None, opts={}):
+    def __init__(self, server, port, callback, clientId=None, opts={}, user=None, pswd=None):
         mc_bin_server.MemcachedBinaryChannel.__init__(self, None, None,
                                                       self._createTapCall(clientId,
                                                                           opts))
+        self.server = server
+        self.port = port
         self.callback = callback
         self.identifier = (server, port)
+        self.user = user
+        self.pswd = pswd
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connect((server, port))
+
+    def create_socket(self, family, type):
+        if not self.user:
+            mc_bin_server.MemcachedBinaryChannel.create_socket(self, family, type)
+            return
+
+        self.family_and_type = family, type
+
+        self.mc = mc_bin_client.MemcachedClient(self.server, self.port)
+        self.mc.sasl_auth_plain(self.user, self.pswd or "")
+
+        sock = self.mc.s
+        sock.setblocking(0)
+        self.set_socket(sock)
 
     def _createTapCall(self, key=None, opts={}):
         # Client identifier
@@ -88,9 +144,9 @@ class TapConnection(mc_bin_server.MemcachedBinaryChannel):
 
 class TapClient(object):
 
-    def __init__(self, servers, callback, opts={}):
+    def __init__(self, servers, callback, opts={}, user=None, pswd=None):
         for t in servers:
-            tc = TapConnection(t.host, t.port, callback, t.id, opts)
+            tc = TapConnection(t.host, t.port, callback, t.id, opts, user, pswd)
 
 def buildGoodSet(goodChars=string.printable, badChar='?'):
     """Build a translation table that turns all characters not in goodChars
@@ -125,7 +181,7 @@ def abbrev(v, maxlen=30):
 def keyprint(v):
     return string.translate(abbrev(v), transt)
 
-def mainLoop(serverList, cb, opts={}):
+def mainLoop(serverList, cb, opts={}, user=None, pswd=None):
     """Run the given callback for each tap message from any of the
     upstream servers.
 
@@ -134,10 +190,12 @@ def mainLoop(serverList, cb, opts={}):
     signal.signal(signal.SIGINT, signal_handler)
 
     connections = (TapDescriptor(a) for a in serverList)
-    TapClient(connections, cb, opts=opts)
+    TapClient(connections, cb, opts=opts, user=user, pswd=pswd)
     asyncore.loop()
 
 if __name__ == '__main__':
+    user, pswd, args = parse_args(sys.argv[1:])
+
     def cb(identifier, cmd, extra, key, vb, val, cas):
         print "%s: ``%s'' (vb:%d) -> ``%s'' (%d bytes from %s)" % (
             memcacheConstants.COMMAND_NAMES[cmd],
@@ -149,4 +207,4 @@ if __name__ == '__main__':
     # will get all data.
     opts = {}
 
-    mainLoop(sys.argv[1:], cb, opts)
+    mainLoop(args, cb, opts, user, pswd)
